@@ -1,6 +1,4 @@
 import type {
-  DashboardData,
-  Kpi,
   Order,
   OrderStatus,
   RevenuePoint,
@@ -111,62 +109,10 @@ for (let i = 0; i < SERIES_DAYS; i++) {
   });
 }
 
-const sum = (points: { value: number }[]) => points.reduce((acc, p) => acc + p.value, 0);
-
-const revenueLast = revenueSeries.slice(-30);
-const revenuePrev = revenueSeries.slice(-60, -30);
-const trafficLast = trafficSeries.slice(-30);
-const trafficPrev = trafficSeries.slice(-60, -30);
-
-const revenue30 = sum(revenueLast.map((p) => ({ value: p.revenue })));
-const revenue30Prev = sum(revenuePrev.map((p) => ({ value: p.revenue })));
-const orders30 = sum(revenueLast.map((p) => ({ value: p.orders })));
-const orders30Prev = sum(revenuePrev.map((p) => ({ value: p.orders })));
-const visits30 = sum(trafficLast.map((p) => ({ value: p.visits })));
-const visits30Prev = sum(trafficPrev.map((p) => ({ value: p.visits })));
-const signups30 = sum(trafficLast.map((p) => ({ value: p.signups })));
-const signups30Prev = sum(trafficPrev.map((p) => ({ value: p.signups })));
-
-const revenueDelta = (revenue30 - revenue30Prev) / revenue30Prev;
-const ordersDelta = (orders30 - orders30Prev) / orders30Prev;
-const visitsDelta = (visits30 - visits30Prev) / visits30Prev;
-
-// Conversion value is a fraction (0.06 = 6%), matching the fractional delta convention.
-const conversion = signups30 / visits30;
-const conversionPrev = signups30Prev / visits30Prev;
-const conversionDelta = (conversion - conversionPrev) / conversionPrev;
-
-// Active users synthesized as a stable share (35-55%) of the 30-day visit pool.
-const kpis: Kpi[] = [
-  {
-    label: "Total revenue",
-    value: revenue30,
-    delta: revenueDelta,
-    format: "currency",
-    spark: revenueSeries.slice(-14).map((p) => p.revenue),
-  },
-  {
-    label: "Orders",
-    value: orders30,
-    delta: ordersDelta,
-    format: "number",
-    spark: revenueSeries.slice(-14).map((p) => p.orders),
-  },
-  {
-    label: "Active users",
-    value: Math.round(visits30 * (0.35 + rng() * 0.2)),
-    delta: visitsDelta,
-    format: "number",
-    spark: trafficSeries.slice(-14).map((p) => p.visits),
-  },
-  {
-    label: "Conversion rate",
-    value: conversion,
-    delta: conversionDelta,
-    format: "percent",
-    spark: trafficSeries.slice(-14).map((p) => p.signups / p.visits),
-  },
-];
+// Active users synthesized as a stable share (35-55%) of any visit pool.
+// Drawn once at load (same stream position as the old inline derivation) so every
+// windowed KPI computation stays deterministic for the session.
+const activeUserShare = 0.35 + rng() * 0.2;
 
 // Order statuses skew by age: fresh orders are in flight, older ones settle to delivered.
 function pickStatus(dayOffset: number): OrderStatus {
@@ -217,9 +163,9 @@ const orders: Order[] = drafts.slice(0, MAX_ORDERS).map((draft) => {
   };
 });
 
-export const dashboardData: DashboardData = {
-  kpis,
+export {
+  activeUserShare,
   revenueSeries,
-  trafficSeries,
   orders,
+  trafficSeries,
 };

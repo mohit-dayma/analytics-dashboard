@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import { Toaster } from "sonner";
 import CommandPalette from "@/components/command-palette/command-palette";
 import Sidebar from "@/components/layout/sidebar";
 import Topbar from "@/components/layout/topbar";
@@ -7,6 +8,7 @@ import { useUiStore } from "@/store/ui-store";
 
 export default function AppShell() {
   const location = useLocation();
+  const theme = useUiStore((s) => s.theme);
   const mobileNavOpen = useUiStore((s) => s.mobileNavOpen);
   const closeMobileNav = useUiStore((s) => s.closeMobileNav);
 
@@ -63,6 +65,9 @@ export default function AppShell() {
       </div>
 
       <CommandPalette />
+
+      {/* Portal-based, so placement here is irrelevant; last child to keep it atop the shell tree. */}
+      <Toaster position="bottom-right" theme={theme} />
     </div>
   );
 }
