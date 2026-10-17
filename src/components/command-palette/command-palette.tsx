@@ -1,6 +1,20 @@
 import { Command } from "cmdk";
-import { Check, LayoutDashboard, Moon, ReceiptText, Sun, SunMoon } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import {
+  Check,
+  Download,
+  LayoutDashboard,
+  Link,
+  Moon,
+  ReceiptText,
+  RotateCcw,
+  Sun,
+  SunMoon,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { dashboardData } from "@/data/seed";
+import { exportOrdersCsv } from "@/features/orders/csv-export";
+import { filterOrdersByParams } from "@/features/overview/components/orders-table";
 import { useUiStore, type Theme } from "@/store/ui-store";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
@@ -16,14 +30,49 @@ const ITEM_CLASS =
 
 export default function CommandPalette() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const commandOpen = useUiStore((s) => s.commandOpen);
   const setCommandOpen = useUiStore((s) => s.setCommandOpen);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
+  const [copied, setCopied] = useState(false);
+  const copyResetTimer = useRef<number>(undefined);
+  const closeTimer = useRef<number>(undefined);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(copyResetTimer.current);
+      window.clearTimeout(closeTimer.current);
+    },
+    [],
+  );
 
   function go(path: string) {
     navigate(path);
     setCommandOpen(false);
+  }
+
+  function exportCsv() {
+    const rows =
+      location.pathname === "/orders"
+        ? filterOrdersByParams(dashboardData.orders, searchParams)
+        : dashboardData.orders;
+    exportOrdersCsv(rows, "pulse-orders.csv");
+    setCommandOpen(false);
+  }
+
+  function copyPageLink() {
+    window.clearTimeout(copyResetTimer.current);
+    window.clearTimeout(closeTimer.current);
+    // Optimistic feedback; reverted if the write actually fails so a broken
+    // clipboard never shows a fake success.
+    setCopied(true);
+    copyResetTimer.current = window.setTimeout(() => setCopied(false), 2000);
+    closeTimer.current = window.setTimeout(() => setCommandOpen(false), 1200);
+    void navigator.clipboard
+      ?.writeText(window.location.href)
+      .catch(() => setCopied(false));
   }
 
   return (
@@ -61,6 +110,42 @@ export default function CommandPalette() {
           >
             <ReceiptText className="size-4" />
             Go to Orders
+          </Command.Item>
+        </Command.Group>
+
+        <Command.Group heading="Actions" className={GROUP_CLASS}>
+          <Command.Item
+            value="export-orders-csv"
+            keywords={["csv", "download", "export"]}
+            onSelect={exportCsv}
+            className={ITEM_CLASS}
+          >
+            <Download className="size-4" />
+            Export orders CSV
+          </Command.Item>
+          <Command.Item
+            value="copy-page-link"
+            keywords={["url", "share", "link"]}
+            onSelect={copyPageLink}
+            className={ITEM_CLASS}
+          >
+            <Link className="size-4" />
+            Copy page link
+            {copied && (
+              <span className="ml-auto flex items-center gap-x-1 text-xs text-muted-foreground">
+                <Check className="size-4" />
+                Copied!
+              </span>
+            )}
+          </Command.Item>
+          <Command.Item
+            value="reset-orders-filters"
+            keywords={["clear", "filters"]}
+            onSelect={() => go("/orders")}
+            className={ITEM_CLASS}
+          >
+            <RotateCcw className="size-4" />
+            Reset orders filters
           </Command.Item>
         </Command.Group>
 
