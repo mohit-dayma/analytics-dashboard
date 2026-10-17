@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useCallback, useEffect, useState } from "react";
+import { Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchDashboardData } from "@/data/mock-api";
 import type { Order } from "@/data/types";
+import { exportOrdersCsv } from "@/features/orders/csv-export";
 import { OrdersTable } from "@/features/overview/components/orders-table";
 
 type FetchState = { status: "loading" } | { status: "ready"; data: Order[] } | { status: "error" };
@@ -24,8 +27,9 @@ function OrdersSkeleton() {
 
 export default function OrdersPage() {
   const [state, setState] = useState<FetchState>({ status: "loading" });
+  const [filteredRows, setFilteredRows] = useState<Order[]>([]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false;
     fetchDashboardData().then(
       (data) => {
@@ -40,22 +44,52 @@ export default function OrdersPage() {
     };
   }, []);
 
+  useEffect(() => load(), [load]);
+
   return (
     <section>
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
-        <p className="text-muted-foreground">Demo dataset — 60 most recent orders.</p>
+        <p className="text-muted-foreground">Demo dataset — the newest orders first.</p>
       </header>
 
       <div className="mt-6">
         {state.status === "loading" ? (
           <OrdersSkeleton />
         ) : state.status === "error" ? (
-          <p className="text-sm text-muted-foreground">{"Couldn't load dashboard data. Refresh to retry."}</p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-muted-foreground">{"Couldn't load dashboard data."}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              // setState in the event handler (not an effect) is what flips the retry into the skeleton state.
+              onClick={() => {
+                setState({ status: "loading" });
+                load();
+              }}
+            >
+              Retry
+            </Button>
+          </div>
         ) : (
           <Card>
+            <CardHeader>
+              <CardTitle>All orders</CardTitle>
+              <CardDescription>{state.data.length} orders — demo dataset</CardDescription>
+              <CardAction>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={filteredRows.length === 0}
+                  onClick={() => exportOrdersCsv(filteredRows, "pulse-orders.csv")}
+                >
+                  <Download aria-hidden="true" />
+                  Export CSV
+                </Button>
+              </CardAction>
+            </CardHeader>
             <CardContent>
-              <OrdersTable data={state.data} />
+              <OrdersTable data={state.data} onFilteredRowsChange={setFilteredRows} />
             </CardContent>
           </Card>
         )}
