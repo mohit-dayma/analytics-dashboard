@@ -1,9 +1,12 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchDashboardData } from "@/data/mock-api";
-import type { DashboardData } from "@/data/types";
+import type { RangeDays } from "@/data/types";
+import { cn } from "@/lib/utils";
 import { KpiCard } from "./components/kpi-card";
 import { OrdersTable } from "./components/orders-table";
 
@@ -14,7 +17,23 @@ const TrafficChart = lazy(() =>
   import("@/components/charts/traffic-chart").then((m) => ({ default: m.TrafficChart })),
 );
 
-type FetchState = { status: "loading" } | { status: "ready"; data: DashboardData } | { status: "error" };
+type RangeOption = { value: RangeDays; label: string };
+
+const RANGES: ReadonlyArray<RangeOption> = [
+  { value: 7, label: "7d" },
+  { value: 30, label: "30d" },
+  { value: 90, label: "90d" },
+];
+
+/** Maps the raw `range` search param to a valid window; anything else falls back to 30 days. */
+function sanitizeRange(raw: string | null): RangeDays {
+  return raw === "7" ? 7 : raw === "90" ? 90 : 30;
+}
+
+/** Last `count` points of an ascending series — its window-sized trailing slice. */
+function sliceLast<T>(series: T[], count: number): T[] {
+  return count >= series.length ? series : series.slice(series.length - count);
+}
 
 const CHART_SKELETON_TICKS = 8;
 
@@ -114,55 +133,107 @@ function OverviewSkeleton() {
   );
 }
 
+/** Segmented range switcher; dims subtly while a range is refetching (no animation, reduced-motion safe). */
+function RangeSwitcher({
+  value,
+  isFetching,
+  onSelect,
+}: {
+  value: RangeDays;
+  isFetching: boolean;
+  onSelect: (value: RangeDays) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Chart date range"
+      aria-busy={isFetching || undefined}
+      className={cn(
+        "inline-flex gap-1 rounded-md bg-muted/50 p-1",
+        isFetching && "opacity-70",
+      )}
+    >
+      {RANGES.map((option) => {
+        const isActive = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={isActive}
+            onClick={() => onSelect(option.value)}
+            className={cn(
+              "rounded-sm px-3 py-1 text-sm font-medium",
+              isActive
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DashboardError({ onRetry, isRetrying }: { onRetry: () => void; isRetrying: boolean }) {
+  return (
+    <section>
+      <p className="text-sm text-muted-foreground">Couldn&apos;t load dashboard data.</p>
+      <Button className="mt-3" variant="outline" size="sm" onClick={onRetry} disabled={isRetrying}>
+        Retry
+      </Button>
+    </section>
+  );
+}
+
 export default function OverviewPage() {
-  const [state, setState] = useState<FetchState>({ status: "loading" });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rangeDays = sanitizeRange(searchParams.get("range"));
 
-  const load = useCallback(() => {
-    let cancelled = false;
-    fetchDashboardData().then(
-      (data) => {
-        if (!cancelled) setState({ status: "ready", data });
-      },
-      () => {
-        if (!cancelled) setState({ status: "error" });
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { data, isError, isFetching, refetch } = useQuery({
+    queryKey: ["dashboard", rangeDays],
+    queryFn: () => fetchDashboardData(rangeDays),
+    // Keep the current range's content on screen while a new range loads; no skeleton flash.
+    placeholderData: (previous) => previous,
+  });
 
-  useEffect(() => load(), [load]);
+  const setRange = useCallback(
+    (value: RangeDays) => {
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.set("range", String(value));
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
-  if (state.status === "loading") return <OverviewSkeleton />;
-
-  if (state.status === "error") {
-    return (
-      <section>
-        <p className="text-sm text-muted-foreground">Couldn&apos;t load dashboard data.</p>
-        <Button
-          className="mt-3"
-          variant="outline"
-          size="sm"
-          // setState in the event handler (not an effect) is what flips the retry into the skeleton state.
-          onClick={() => {
-            setState({ status: "loading" });
-            load();
-          }}
-        >
-          Retry
-        </Button>
-      </section>
-    );
+  if (isError && !data) {
+    return <DashboardError onRetry={() => void refetch()} isRetrying={isFetching} />;
   }
 
-  const { kpis, revenueSeries, trafficSeries, orders } = state.data;
+  if (!data) {
+    return <OverviewSkeleton />;
+  }
+
+  const { kpis, orders } = data;
+  const revenueWindow = sliceLast(data.revenueSeries, rangeDays);
+  const trafficWindow = sliceLast(data.trafficSeries, rangeDays);
 
   return (
     <section>
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-        <p className="text-muted-foreground">Demo dataset — 90 days of activity. All numbers are seeded mock data.</p>
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+          <p className="text-muted-foreground">
+            Demo dataset — {rangeDays} days of activity. All numbers are seeded mock data.
+          </p>
+        </div>
+        <RangeSwitcher value={rangeDays} isFetching={isFetching} onSelect={setRange} />
       </header>
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -175,14 +246,14 @@ export default function OverviewPage() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Revenue</CardTitle>
-            <CardDescription>Daily revenue, last 90 days</CardDescription>
+            <CardDescription>Daily revenue, last {rangeDays} days</CardDescription>
           </CardHeader>
           <CardContent>
             <Suspense fallback={<ChartCardSkeletonBody />}>
-              {revenueSeries.length === 0 ? (
+              {revenueWindow.length === 0 ? (
                 <EmptyChart label="Revenue" />
               ) : (
-                <RevenueChart data={revenueSeries} />
+                <RevenueChart data={revenueWindow} compare={data.compareRevenueSeries} />
               )}
             </Suspense>
           </CardContent>
@@ -190,14 +261,14 @@ export default function OverviewPage() {
         <Card>
           <CardHeader>
             <CardTitle>Traffic</CardTitle>
-            <CardDescription>Visits and signups, last 90 days</CardDescription>
+            <CardDescription>Visits and signups, last {rangeDays} days</CardDescription>
           </CardHeader>
           <CardContent>
             <Suspense fallback={<ChartCardSkeletonBody />}>
-              {trafficSeries.length === 0 ? (
+              {trafficWindow.length === 0 ? (
                 <EmptyChart label="Traffic" />
               ) : (
-                <TrafficChart data={trafficSeries} />
+                <TrafficChart data={trafficWindow} compare={data.compareTrafficSeries} />
               )}
             </Suspense>
           </CardContent>

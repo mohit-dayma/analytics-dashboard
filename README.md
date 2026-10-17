@@ -20,8 +20,8 @@ More captures (light/dark variants): [`orders-light`](docs/screenshots/orders-li
 
 - App shell with responsive sidebar navigation and dark mode (tokens flip via the `.dark` class)
 - Command palette built on `cmdk`, wired to real actions (navigation, theming, CSV export, copy-link, filter reset)
-- Mock API (`src/data/mock-api`) that simulates ~300ms latency, driving skeleton loading states everywhere
-- Seeded, deterministic dataset: 90 days of revenue/traffic series, 4 KPIs, and 60 orders
+- Mock API (`src/data/mock-api`) that simulates ~300ms latency (+ deterministic slow/failing `updateOrderStatus` calls) plus a React Query cache layer (`["dashboard", rangeDays]`) with optimistic status updates, rollback, and retry/error toasts
+- Seeded, deterministic dataset: 90 days of revenue/traffic series, range-derived KPIs (7/30/90-day windows vs previous period), and 60 orders
 - Overview: 4 KPI cards with a hand-built SVG sparkline (Catmull-Rom smoothing, CSS draw-in animation) plus Recharts area/composed charts
 - Orders table on TanStack Table: sortable headers, global + per-column filters (status/product/date-range) persisted in URL search params, pagination, row-detail slide-over, and CSV export of the filtered rows
 - Shared ShadCN-style UI primitives under `src/components/ui`
@@ -44,15 +44,15 @@ More captures (light/dark variants): [`orders-light`](docs/screenshots/orders-li
 
 ### M3 — Data layer upgrade
 
-- [ ] Replace `mock-api` fetch with React Query and real cache keys
-- [ ] Optimistic status updates on orders
-- [ ] Retry/error toasts
+- [x] Replace `mock-api` fetch with React Query and real cache keys (`["dashboard", rangeDays]`, stale-while-warm, 2 retries with backoff)
+- [x] Optimistic status updates on orders (cache-wide snapshot + rollback, forward-transition map)
+- [x] Retry/error toasts (sonner; deterministic fault injection in `updateOrderStatus` to exercise rollback/Retry)
 
 ### M4 — Depth
 
-- [ ] Date-range switcher feeding the whole dashboard
-- [ ] Dashboard-level derived KPIs
-- [ ] Compare-to-previous-period shading in charts
+- [x] Date-range switcher feeding the whole dashboard (`?range=7|30|90`)
+- [x] Dashboard-level derived KPIs (`src/data/range.ts`: current vs previous equal-length window)
+- [x] Compare-to-previous-period shading in charts (slot-aligned muted dashed line + tooltip delta)
 
 ### M5 — Quality
 
@@ -71,8 +71,9 @@ More captures (light/dark variants): [`orders-light`](docs/screenshots/orders-li
 
 <!-- TODO: expand this section as the data layer matures -->
 
-- The app talks only to `src/data/mock-api`, which simulates ~300ms latency — swap the module for a real client without touching features.
-- Global state is intentionally tiny (theme + palette + drawer) — server data stays local to features.
+- The app talks only to `src/data/mock-api`, which simulates ~300ms latency (plus deterministic slow/failing calls) — swap the module for a real client without touching features.
+- React Query keys are the `["dashboard", rangeDays]` family: reads and optimistic mutations share one cache slice, so a status write in the slide-over is instantly consistent with every page (and the palette's CSV export reads that same cache first).
+- Global UI state is intentionally tiny (theme + palette + drawer in zustand) — server data lives only in the React Query cache.
 - Path alias `@` -> `./src`.
 - Design tokens in `src/index.css` flip via the `.dark` class, so `var(--chart-1)`–`var(--chart-5)` need no theme-specific chart code.
 - Number, currency, and date formatting is centralized in `src/lib/format.ts`.
