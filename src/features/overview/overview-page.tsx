@@ -221,8 +221,16 @@ export default function OverviewPage() {
   }
 
   const { kpis, orders } = data;
-  const revenueWindow = sliceLast(data.revenueSeries, rangeDays);
-  const trafficWindow = sliceLast(data.trafficSeries, rangeDays);
+  // While a range switch refetches, `placeholderData` keeps the PREVIOUS
+  // range's payload. Watch the payload's own `rangeDays` so everything on
+  // screen — header copy, KPI cards, chart windows, compare series — comes
+  // from one coherent range; mixing in the URL's new range would pair the
+  // new window's chart slices with the old range's derived kpis/compare
+  // series while the response is in flight. Once settled,
+  // `data.rangeDays === rangeDays` by construction.
+  const viewDays = data.rangeDays;
+  const revenueWindow = sliceLast(data.revenueSeries, viewDays);
+  const trafficWindow = sliceLast(data.trafficSeries, viewDays);
 
   return (
     <section>
@@ -230,7 +238,7 @@ export default function OverviewPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
           <p className="text-muted-foreground">
-            Demo dataset — {rangeDays} days of activity. All numbers are seeded mock data.
+            Demo dataset — {viewDays} days of activity. All numbers are seeded mock data.
           </p>
         </div>
         <RangeSwitcher value={rangeDays} isFetching={isFetching} onSelect={setRange} />
@@ -246,7 +254,7 @@ export default function OverviewPage() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Revenue</CardTitle>
-            <CardDescription>Daily revenue, last {rangeDays} days</CardDescription>
+            <CardDescription>Daily revenue, last {viewDays} days</CardDescription>
           </CardHeader>
           <CardContent>
             <Suspense fallback={<ChartCardSkeletonBody />}>
@@ -261,7 +269,7 @@ export default function OverviewPage() {
         <Card>
           <CardHeader>
             <CardTitle>Traffic</CardTitle>
-            <CardDescription>Visits and signups, last {rangeDays} days</CardDescription>
+            <CardDescription>Visits and signups, last {viewDays} days</CardDescription>
           </CardHeader>
           <CardContent>
             <Suspense fallback={<ChartCardSkeletonBody />}>

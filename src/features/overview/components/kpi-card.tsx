@@ -12,7 +12,7 @@ function formatKpiValue(kpi: Kpi): string {
 }
 
 export function KpiCard({ kpi }: { kpi: Kpi }) {
-  const up = kpi.delta >= 0;
+  const delta = kpi.delta;
 
   return (
     <Card>
@@ -20,15 +20,30 @@ export function KpiCard({ kpi }: { kpi: Kpi }) {
         <p className="text-sm text-muted-foreground">{kpi.label}</p>
         <div className="mt-1 flex items-baseline gap-2">
           <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatKpiValue(kpi)}</span>
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 text-sm font-medium tabular-nums",
-              up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
-            )}
-          >
-            {up ? <TrendingUp className="size-4" aria-hidden="true" /> : <TrendingDown className="size-4" aria-hidden="true" />}
-            {formatDelta(kpi.delta)}
-          </span>
+          {delta === null ? (
+            // No previous window (90d exhausts the seed history): a dash says
+            // "no comparison available" instead of a spurious "+0.0%".
+            <span
+              className="text-sm font-medium text-muted-foreground"
+              title="No previous window to compare against"
+            >
+              —
+            </span>
+          ) : (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 text-sm font-medium tabular-nums",
+                delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+              )}
+            >
+              {delta >= 0 ? (
+                <TrendingUp className="size-4" aria-hidden="true" />
+              ) : (
+                <TrendingDown className="size-4" aria-hidden="true" />
+              )}
+              {formatDelta(delta)}
+            </span>
+          )}
         </div>
         <div className="mt-3 h-10">
           <Sparkline data={kpi.spark} ariaLabel={`${kpi.label} trend`} className="h-full w-full" />

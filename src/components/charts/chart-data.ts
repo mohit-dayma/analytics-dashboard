@@ -26,20 +26,24 @@ export function formatCompactNumber(value: number): string {
  * ending the day BEFORE the current window's first day, so it is laid over the
  * chart by SLOT index (compare[i] sits on the current window's i-th x position),
  * not by its own real dates. That keeps the x domain untouched — the standard
- * PoP visual convention. Mismatches are handled defensively only: compare is
- * sliced to the current length, and any slot the (shorter) compare series does
- * not cover becomes `undefined`, which simply ends the dashed line early.
+ * PoP visual convention.
+ *
+ * A length mismatch is an upstream invariant violation (the compare series was
+ * built for a different window length) and is treated as "no compare data":
+ * truncating would silently chart previous-period values against the wrong
+ * dates, which reads as a plausible but wrong dashed line.
  */
 function alignSlots<T extends { date: string }>(
   data: readonly T[],
   compare: readonly T[] | null | undefined,
   pick: (point: T) => number,
 ): Array<T & { previous?: number }> {
-  if (!compare?.length) return data as Array<T & { previous?: number }>;
-  const aligned = compare.slice(0, data.length);
+  if (!compare || compare.length !== data.length) {
+    return data as Array<T & { previous?: number }>;
+  }
   return data.map((point, i) => {
-    const prev = aligned[i];
-    return { ...point, previous: prev === undefined ? undefined : pick(prev) };
+    const previous = compare[i];
+    return previous === undefined ? { ...point } : { ...point, previous: pick(previous) };
   });
 }
 

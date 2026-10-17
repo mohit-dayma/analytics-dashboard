@@ -58,7 +58,11 @@ export async function fetchDashboardData(rangeDays: RangeDays = DEFAULT_RANGE_DA
 //   Calls hitting both rules (28, 56, ...) reject — payment failure outranks slowness.
 // ---------------------------------------------------------------------------
 
-export type UpdateOrderStatusErrorCode = "unchanged-status" | "cancelled-order" | "not-found";
+export type UpdateOrderStatusErrorCode =
+  | "payment-unreachable"
+  | "unchanged-status"
+  | "cancelled-order"
+  | "not-found";
 export type UpdateOrderStatusResult = { order: Order };
 export type UpdateOrderStatusError = Error & { code: UpdateOrderStatusErrorCode };
 
@@ -73,6 +77,13 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus): P
   const injectsFailure = callNumber % 7 === 0;
   const injectsSlowness = callNumber % 4 === 0;
   await delay(injectsFailure ? LATENCY_MS : injectsSlowness ? SLOW_LATENCY_MS : LATENCY_MS);
+
+  // The injectsFailure rejection the header comment promises: a call hitting
+  // n % 7 might otherwise be marked "slow" — payment failure outranks slowness
+  // by resolving the failure exit immediately after the base delay.
+  if (injectsFailure) {
+    throw orderStatusError("payment-unreachable", "Payment service unreachable — try again.");
+  }
 
   const order = orderStore.find((candidate) => candidate.id === orderId);
   if (!order) {

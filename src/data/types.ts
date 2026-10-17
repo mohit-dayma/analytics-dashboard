@@ -29,7 +29,7 @@ export interface TrafficPoint {
 export interface Kpi {
   label: string;
   value: number;
-  delta: number;   // fractional change vs previous period, e.g. 0.14 = +14%
+  delta: number | null; // fractional change vs previous period (0.14 = +14%); null = no previous window to compare (90d)
   format: "currency" | "number" | "percent";
   spark: number[]; // last-14-day shape for the hand-built sparkline
 }

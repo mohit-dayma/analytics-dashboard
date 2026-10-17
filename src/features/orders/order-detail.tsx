@@ -224,7 +224,14 @@ export function OrderDetailPanel(props: {
       className={cn(
         // Panel styling only — the dialog element IS the slide-over. The
         // backdrop comes from native ::backdrop via the backdrop: variant.
-        "fixed inset-y-0 right-0 z-50 m-0 flex w-full max-w-md flex-col border-l bg-background shadow-xl",
+        // `left-auto`, `h-dvh`/`max-h-none` and `overflow-hidden` are
+        // load-bearing: the UA rule `dialog { inset-inline-start/end: 0;
+        // height: fit-content; max-height: calc(100% - 2em - 6px);
+        // overflow: auto }` survives Tailwind preflight (which resets
+        // margin/padding but never position or height), so without them the
+        // panel shrink-wraps into the top-left corner, ends up short of the
+        // full viewport height, or gains a second scrollbar outside the body.
+        "fixed inset-y-0 right-0 left-auto z-50 m-0 flex h-dvh max-h-none w-full max-w-md flex-col overflow-hidden border-l bg-background shadow-xl",
         // Open/close styling follows the native `open` attribute state: closed
         // dialogs are display:none and irrelevant, so open values transition
         // from the closed values seeded via @starting-style.
@@ -232,7 +239,11 @@ export function OrderDetailPanel(props: {
         // display/overlay transitions with discrete behavior keep the panel in
         // the top layer while the slide-out runs, so close animates too.
         "transition-[translate,opacity,display,overlay] duration-200 [transition-behavior:allow-discrete] motion-reduce:transition-none",
-        "backdrop:bg-black/50",
+        // ::backdrop does not inherit from the dialog element, so the scrim's
+        // fade needs its own discrete transition on the pseudo-element:
+        // entering, `starting:open` seeds the pre-open transparent background;
+        // exiting, display/overlay keep it rendered for the fade-out.
+        "backdrop:bg-black/50 backdrop:transition-[background-color,display,overlay] backdrop:duration-200 backdrop:transition-discrete backdrop:starting:bg-transparent motion-reduce:backdrop:transition-none",
       )}
     >
       {order && (

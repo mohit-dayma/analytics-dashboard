@@ -10,10 +10,12 @@ const METRIC_WINDOW_DAYS = 14;
 const sum = <T>(points: readonly T[], value: (point: T) => number): number =>
   points.reduce((acc, point) => acc + value(point), 0);
 
-// Deltas stay fractional (0.14 = +14%); 0 when no comparable previous window
-// exists (rangeDays = 90 exhausts the seeded history).
-const fractionalDelta = (current: number, previous: number): number =>
-  previous > 0 ? (current - previous) / previous : 0;
+// Deltas stay fractional (0.14 = +14%); null means no comparable previous
+// window exists (rangeDays = 90 exhausts the seeded history) — deliberately
+// distinct from a measured flat 0 so the cards can render "no comparison"
+// instead of an implied-measured "+0.0%".
+const fractionalDelta = (current: number, previous: number): number | null =>
+  previous > 0 ? (current - previous) / previous : null;
 
 // Validates the runtime value behind the RangeDays union (defensive backend seam).
 export function normalizeRangeDays(rangeDays: number): RangeDays {
