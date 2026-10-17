@@ -7,7 +7,8 @@
     "preview": "vite preview",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "dev": "vite"
+    "dev": "vite",
+    "doctor": "npx react-doctor@latest"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.5.0",
