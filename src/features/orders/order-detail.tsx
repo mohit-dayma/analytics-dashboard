@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import {
   CalendarDays,
   CircleDollarSign,
@@ -12,6 +12,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Order, OrderStatus } from "@/data/types";
+import {
+  nextStatuses,
+  statusLabel,
+  useUpdateOrderStatus,
+  type UpdateOrderStatusVariables,
+} from "@/features/orders/use-update-order-status";
 import { formatChartDate, formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -91,6 +97,92 @@ function StatusTimeline({ status }: { status: OrderStatus }) {
   );
 }
 
+/**
+ * Forward-only status transitions with inline feedback — deliberately no
+ * toasts: the only mutator lives inside the slide-over, and a native modal
+ * dialog makes every node outside its subtree inert (`showModal()`), so even
+ * a top-layer toast is visible-but-dead exactly when the Retry it carries is
+ * needed (see TopLayerToaster in app-shell.tsx). Only the clicked button
+ * reports pending ("Marking…"); every button disables while a mutation is in
+ * flight. Failures render an inline error with a live Retry.
+ */
+function ChangeStatus({ order }: { order: Order }) {
+  const mutation = useUpdateOrderStatus();
+  const targets = nextStatuses(order.status);
+  const isPending = mutation.isPending;
+  const pendingStatus = isPending ? mutation.variables?.status : undefined;
+
+  type StatusFeedback =
+    | { kind: "success"; status: OrderStatus }
+    | { kind: "error"; message: string; retry: UpdateOrderStatusVariables };
+
+  const [feedback, setFeedback] = useState<StatusFeedback | null>(null);
+
+  function update(target: OrderStatus) {
+    const variables: UpdateOrderStatusVariables = { orderId: order.id, status: target };
+    // Per-call callbacks keep the feedback scoped to THIS attempt; the
+    // component is keyed by order id, so reopening another order restarts it.
+    mutation.mutate(variables, {
+      onSuccess({ order }) {
+        setFeedback({ kind: "success", status: order.status });
+      },
+      onError(error, variables) {
+        // The mock faults deterministically (calls n % 7), so a retry can
+        // still hit the slow/failing path — but eventually succeeds, like
+        // real flaky backends.
+        setFeedback({ kind: "error", message: error.message, retry: variables });
+      },
+    });
+  }
+
+  return (
+    <section aria-label="Change status" className="mt-4">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Change status</h3>
+      {targets.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {feedback?.kind === "success" ? `Marked ${statusLabel(feedback.status)}.` : "No further transitions."}
+        </p>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {targets.map((target) => (
+            <Button
+              key={target}
+              variant="outline"
+              size="sm"
+              disabled={isPending}
+              aria-busy={pendingStatus === target || undefined}
+              onClick={() => update(target)}
+            >
+              {pendingStatus === target ? "Marking…" : `Mark ${statusLabel(target)}`}
+            </Button>
+          ))}
+        </div>
+      )}
+      {feedback?.kind === "success" && targets.length !== 0 && (
+        <p role="status" className="mt-2 text-sm text-muted-foreground">
+          Marked {statusLabel(feedback.status)}.
+        </p>
+      )}
+      {feedback?.kind === "error" && (
+        <div
+          role="alert"
+          className="mt-2 flex items-center gap-3 text-sm text-red-600 dark:text-red-400"
+        >
+          <span className="min-w-0 flex-1">{feedback.message}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isPending}
+            onClick={() => update(feedback.retry.status)}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 interface DetailRow {
   icon: typeof User | null;
   label: string;
@@ -104,129 +196,163 @@ export function OrderDetailPanel(props: {
   onClose: () => void;
 }) {
   const { order, open, onClose } = props;
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  // While open: Escape closes, focus moves into the panel, and closing restores
-  // focus to whichever element had it before the panel opened.
+  // Escape fires `cancel`; preventDefault keeps the close routed through React
+  // state (`onClose`) so `open` remains the single source of truth.
+  function handleCancel(event: SyntheticEvent<HTMLDialogElement>) {
+    event.preventDefault();
+    onClose();
+  }
+
+  // `open` drives the imperative side effects only — the dialog element itself
+  // stays mounted (a closed native dialog is display:none and out of the
+  // accessibility tree). showModal() puts the panel in the top layer with
+  // native focus trapping, and closing the dialog restores focus to whichever
+  // element had it before it opened.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      dialog.showModal();
+      // Focus the close button on open, as before. Native focus restoration on
+      // close still points at the pre-open element because showModal() records
+      // it before we move focus inside the panel.
+      closeButtonRef.current?.focus();
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
+  }, [open]);
+
+  // Backdrop-click close. Clicks that hit the native `::backdrop` are
+  // dispatched to the <dialog> host element itself, while clicks inside the
+  // panel land on child elements — so an exact target match means "the user
+  // clicked the scrim". The listener attaches at the document level instead of
+  // a JSX onClick on the non-interactive <dialog>: the dialog can never be
+  // focusable (so a key handler there would never fire), and its interactive
+  // affordances are the real buttons plus native Escape-on-cancel.
   useEffect(() => {
     if (!open) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+    function onDocumentClick(event: globalThis.MouseEvent) {
+      if (event.target === dialogRef.current) onClose();
     }
-    window.addEventListener("keydown", onKeyDown);
-    closeButtonRef.current?.focus();
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
-    };
+    document.addEventListener("click", onDocumentClick);
+    return () => document.removeEventListener("click", onDocumentClick);
   }, [open, onClose]);
 
-  // The parent keeps `order` mounted while the panel slides out, so the panel
-  // itself needs no retained copy — it simply renders nothing until the first
-  // order is selected.
-  if (!order) return null;
-  const shownOrder = order;
-
-  const rows: DetailRow[] = [
-    { icon: User, label: "Customer", value: shownOrder.customer, truncate: true },
-    { icon: Mail, label: "Email", value: shownOrder.email, truncate: true },
-    { icon: Package, label: "Product", value: shownOrder.product, truncate: true },
-    { icon: Globe, label: "Region", value: shownOrder.region, truncate: true },
-    {
-      icon: null,
-      label: "Status",
-      value: (
-        <Badge variant="outline" className={statusBadge[shownOrder.status]}>
-          {shownOrder.status}
-        </Badge>
-      ),
-      truncate: true,
-    },
-    {
-      icon: CircleDollarSign,
-      label: "Total",
-      value: <span className="font-medium tabular-nums">{formatCurrency(shownOrder.total)}</span>,
-      truncate: true,
-    },
-    {
-      icon: CalendarDays,
-      label: "Created",
-      truncate: false,
-      value: (
-        <span className="flex flex-wrap items-baseline gap-x-2">
-          <span>{formatChartDate(shownOrder.createdAt)}</span>
-          <span className="text-xs text-muted-foreground tabular-nums" title={shownOrder.createdAt}>
-            {shownOrder.createdAt}
-          </span>
-        </span>
-      ),
-    },
-  ];
+  const rows: DetailRow[] = order
+    ? [
+        { icon: User, label: "Customer", value: order.customer, truncate: true },
+        { icon: Mail, label: "Email", value: order.email, truncate: true },
+        { icon: Package, label: "Product", value: order.product, truncate: true },
+        { icon: Globe, label: "Region", value: order.region, truncate: true },
+        {
+          icon: null,
+          label: "Status",
+          value: (
+            <Badge variant="outline" className={statusBadge[order.status]}>
+              {order.status}
+            </Badge>
+          ),
+          truncate: true,
+        },
+        {
+          icon: CircleDollarSign,
+          label: "Total",
+          value: <span className="font-medium tabular-nums">{formatCurrency(order.total)}</span>,
+          truncate: true,
+        },
+        {
+          icon: CalendarDays,
+          label: "Created",
+          truncate: false,
+          value: (
+            <span className="flex flex-wrap items-baseline gap-x-2">
+              <span>{formatChartDate(order.createdAt)}</span>
+              <span className="text-xs text-muted-foreground tabular-nums" title={order.createdAt}>
+                {order.createdAt}
+              </span>
+            </span>
+          ),
+        },
+      ]
+    : [];
 
   return (
-    <>
-      {/* Backdrop stays mounted so it fades smoothly in both directions. */}
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close order details"
-        aria-hidden={!open}
-        tabIndex={open ? 0 : -1}
-        className={`fixed inset-0 z-50 bg-black/50 transition-opacity duration-200 motion-reduce:transition-none ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Order ${shownOrder.id}`}
-        inert={!open}
-        aria-hidden={!open}
-        className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l bg-background shadow-xl transition-[transform,opacity] duration-200 motion-reduce:transition-none ${
-          open ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-full opacity-0"
-        }`}
-      >
-        <header className="flex items-start justify-between gap-4 border-b px-5 py-4">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold tracking-tight">{shownOrder.id}</h2>
-            <Badge variant="outline" className={cn("mt-1.5", statusBadge[shownOrder.status])}>
-              {shownOrder.status}
-            </Badge>
+    <dialog
+      ref={dialogRef}
+      aria-label={order ? `Order ${order.id}` : undefined}
+      onCancel={handleCancel}
+      onClose={onClose}
+      className={cn(
+        // Panel styling only — the dialog element IS the slide-over. The
+        // backdrop comes from native ::backdrop via the backdrop: variant.
+        // `left-auto`, `h-dvh`/`max-h-none` and `overflow-hidden` are
+        // load-bearing: the UA rule `dialog { inset-inline-start/end: 0;
+        // height: fit-content; max-height: calc(100% - 2em - 6px);
+        // overflow: auto }` survives Tailwind preflight (which resets
+        // margin/padding but never position or height), so without them the
+        // panel shrink-wraps into the top-left corner, ends up short of the
+        // full viewport height, or gains a second scrollbar outside the body.
+        "fixed inset-y-0 right-0 left-auto z-50 m-0 flex h-dvh max-h-none w-full max-w-md flex-col overflow-hidden border-l bg-background shadow-xl",
+        // Open/close styling follows the native `open` attribute state: closed
+        // dialogs are display:none and irrelevant, so open values transition
+        // from the closed values seeded via @starting-style.
+        "hidden open:flex translate-x-full opacity-0 open:translate-x-0 open:opacity-100 starting:open:translate-x-full starting:open:opacity-0",
+        // display/overlay transitions with discrete behavior keep the panel in
+        // the top layer while the slide-out runs, so close animates too.
+        "transition-[translate,opacity,display,overlay] duration-200 [transition-behavior:allow-discrete] motion-reduce:transition-none",
+        // ::backdrop does not inherit from the dialog element, so the scrim's
+        // fade needs its own discrete transition on the pseudo-element:
+        // entering, `starting:open` seeds the pre-open transparent background;
+        // exiting, display/overlay keep it rendered for the fade-out.
+        "backdrop:bg-black/50 backdrop:transition-[background-color,display,overlay] backdrop:duration-200 backdrop:transition-discrete backdrop:starting:bg-transparent motion-reduce:backdrop:transition-none",
+      )}
+    >
+      {order && (
+        <>
+          <header className="flex items-start justify-between gap-4 border-b px-5 py-4">
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-semibold tracking-tight">{order.id}</h2>
+              <Badge variant="outline" className={cn("mt-1.5", statusBadge[order.status])}>
+                {order.status}
+              </Badge>
+            </div>
+            <Button
+              ref={closeButtonRef}
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              aria-label="Close order details"
+              className="shrink-0"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </Button>
+          </header>
+
+          <div className="flex-1 overflow-y-auto px-5 py-5">
+            <StatusTimeline status={order.status} />
+
+            <dl className="mt-6 rounded-lg border">
+              {rows.map(({ icon: Icon, label, value, truncate }) => (
+                <div
+                  key={label}
+                  className="flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                >
+                  {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                  <dt className="w-16 shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {label}
+                  </dt>
+                  <dd className={cn("min-w-0 flex-1 text-sm text-foreground", truncate && "truncate")}>{value}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <ChangeStatus key={order.id} order={order} />
           </div>
-          <Button
-            ref={closeButtonRef}
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            aria-label="Close order details"
-            className="shrink-0"
-          >
-            <X className="size-4" aria-hidden="true" />
-          </Button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto px-5 py-5">
-          <StatusTimeline status={shownOrder.status} />
-
-          <dl className="mt-6 rounded-lg border">
-            {rows.map(({ icon: Icon, label, value, truncate }) => (
-              <div
-                key={label}
-                className="flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
-              >
-                {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
-                <dt className="w-16 shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {label}
-                </dt>
-                <dd className={cn("min-w-0 flex-1 text-sm text-foreground", truncate && "truncate")}>{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </aside>
-    </>
+        </>
+      )}
+    </dialog>
   );
 }

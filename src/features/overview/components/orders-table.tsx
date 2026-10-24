@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   flexRender,
@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Order, OrderStatus } from "@/data/types";
 import { OrderDetailPanel } from "@/features/orders/order-detail";
+import { daysCutoff, ORDER_STATUSES, parseDays, parseStatus } from "@/features/orders/filter-orders";
 import { formatChartDate, formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -33,25 +34,7 @@ const statusBadge: Record<OrderStatus, string> = {
   cancelled: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
 };
 
-const ORDER_STATUSES: readonly OrderStatus[] = ["pending", "processing", "shipped", "delivered", "cancelled"];
 const SORTABLE_COLUMN_IDS = ["customer", "product", "region", "status", "total", "createdAt"] as const;
-
-function isOrderStatus(value: unknown): value is OrderStatus {
-  return typeof value === "string" && (ORDER_STATUSES as readonly string[]).includes(value);
-}
-
-function parseStatus(value: string | null): OrderStatus | undefined {
-  return isOrderStatus(value) ? value : undefined;
-}
-
-function parseDays(value: string | null): "7" | "30" | undefined {
-  return value === "7" || value === "30" ? value : undefined;
-}
-
-/** Inclusive lower bound of a "last N days" window, as an ISO date string. */
-function daysCutoff(days: "7" | "30"): string {
-  return new Date(Date.now() - (Number(days) - 1) * 86_400_000).toISOString().slice(0, 10);
-}
 
 function paramsToSorting(params: URLSearchParams): SortingState {
   const sort = params.get("sort");
@@ -74,22 +57,6 @@ function resolveState<T>(updater: Updater<T>, current: T): T {
   // TanStack's Updater type is `T | ((old: T) => T)`; the typeof check narrows
   // the final updater case.
   return typeof updater === "function" ? (updater as (old: T) => T)(current) : updater;
-}
-
-/**
- * Applies only the URL params this table supports (status / product / days).
- * `q`, `sort` and `dir` are table-interaction state, not data filters.
- */
-export function filterOrdersByParams(orders: Order[], params: URLSearchParams): Order[] {
-  const status = parseStatus(params.get("status"));
-  const product = params.get("product") || undefined;
-  const days = parseDays(params.get("days"));
-  return orders.filter((order) => {
-    if (status && order.status !== status) return false;
-    if (product && order.product !== product) return false;
-    if (days && order.createdAt < daysCutoff(days)) return false;
-    return true;
-  });
 }
 
 function sortableHeader(label: string, alignRight = false): (ctx: HeaderContext<Order, unknown>) => ReactNode {
@@ -188,10 +155,9 @@ function FilterSelect({ label, value, options, onValueChange }: {
   );
 }
 
-export function OrdersTable({ data, onRowClick, onFilteredRowsChange }: {
+export function OrdersTable({ data, onRowClick }: {
   data: Order[];
   onRowClick?: (order: Order) => void;
-  onFilteredRowsChange?: (orders: Order[]) => void;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const sorting = useMemo(() => paramsToSorting(searchParams), [searchParams]);
@@ -273,13 +239,6 @@ export function OrdersTable({ data, onRowClick, onFilteredRowsChange }: {
     initialState: { pagination: { pageSize: 10 } },
   });
 
-  const filteredRowModel = table.getFilteredRowModel();
-  const filteredOrders = useMemo(() => filteredRowModel.rows.map((row) => row.original), [filteredRowModel]);
-
-  useEffect(() => {
-    onFilteredRowsChange?.(filteredOrders);
-  }, [onFilteredRowsChange, filteredOrders]);
-
   const productOptions = useMemo(
     () => Array.from(new Set(data.map((order) => order.product))).sort((a, b) => a.localeCompare(b)),
     [data],
@@ -311,14 +270,21 @@ export function OrdersTable({ data, onRowClick, onFilteredRowsChange }: {
 
   // Row detail slide-over state; every row opens it, and an optional parent
   // onRowClick still gets called (e.g. for analytics or future deep-links).
-  // `order` deliberately stays mounted while the panel slides out, so the
-  // close animation always has content to show.
-  const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  // The order is looked up from `data` by id, not snapshotted on click: after an
+  // optimistic status update the mutation writes into this same `data` (via the
+  // dashboard query cache) and the slide-over re-renders with the NEW status —
+  // no extra plumbing. Closing only clears `open`, so the slide-out animation
+  // always has content to show.
+  const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const detailOrder = useMemo(
+    () => (detailOrderId ? (data.find((order) => order.id === detailOrderId) ?? null) : null),
+    [data, detailOrderId],
+  );
 
   const openDetail = useCallback(
     (order: Order) => {
-      setDetailOrder(order);
+      setDetailOrderId(order.id);
       setDetailOpen(true);
       onRowClick?.(order);
     },

@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchDashboardData } from "@/data/mock-api";
-import type { Order } from "@/data/types";
 import { exportOrdersCsv } from "@/features/orders/csv-export";
+import { filterOrdersByParams } from "@/features/orders/filter-orders";
 import { OrdersTable } from "@/features/overview/components/orders-table";
-
-type FetchState = { status: "loading" } | { status: "ready"; data: Order[] } | { status: "error" };
 
 function OrdersSkeleton() {
   return (
@@ -26,25 +26,21 @@ function OrdersSkeleton() {
 }
 
 export default function OrdersPage() {
-  const [state, setState] = useState<FetchState>({ status: "loading" });
-  const [filteredRows, setFilteredRows] = useState<Order[]>([]);
+  const [searchParams] = useSearchParams();
 
-  const load = useCallback(() => {
-    let cancelled = false;
-    fetchDashboardData().then(
-      (data) => {
-        if (!cancelled) setState({ status: "ready", data: data.orders });
-      },
-      () => {
-        if (!cancelled) setState({ status: "error" });
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Same key family the overview page caches per range (["dashboard", RangeDays]);
+  // optimistic status writes from the mutation land in this `data.orders`.
+  const { data, isPending, isError, isFetching, refetch } = useQuery({
+    queryKey: ["dashboard", 30],
+    queryFn: () => fetchDashboardData(30),
+  });
 
-  useEffect(() => load(), [load]);
+  // Derived directly from URL params (the table renders the same derivation), so the
+  // Export button never needs the table to push state up.
+  const filteredRows = useMemo(
+    () => (data ? filterOrdersByParams(data.orders, searchParams) : []),
+    [data, searchParams],
+  );
 
   return (
     <section>
@@ -54,20 +50,12 @@ export default function OrdersPage() {
       </header>
 
       <div className="mt-6">
-        {state.status === "loading" ? (
+        {isPending ? (
           <OrdersSkeleton />
-        ) : state.status === "error" ? (
+        ) : isError || !data ? (
           <div className="flex items-center gap-3">
             <p className="text-sm text-muted-foreground">{"Couldn't load dashboard data."}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              // setState in the event handler (not an effect) is what flips the retry into the skeleton state.
-              onClick={() => {
-                setState({ status: "loading" });
-                load();
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching}>
               Retry
             </Button>
           </div>
@@ -75,7 +63,7 @@ export default function OrdersPage() {
           <Card>
             <CardHeader>
               <CardTitle>All orders</CardTitle>
-              <CardDescription>{state.data.length} orders — demo dataset</CardDescription>
+              <CardDescription>{data.orders.length} orders — demo dataset</CardDescription>
               <CardAction>
                 <Button
                   variant="outline"
@@ -89,7 +77,7 @@ export default function OrdersPage() {
               </CardAction>
             </CardHeader>
             <CardContent>
-              <OrdersTable data={state.data} onFilteredRowsChange={setFilteredRows} />
+              <OrdersTable data={data.orders} />
             </CardContent>
           </Card>
         )}

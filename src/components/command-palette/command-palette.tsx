@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { dashboardData } from "@/data/seed";
+import { useQueryClient } from "@tanstack/react-query";
+import { fetchDashboardData } from "@/data/mock-api";
+import type { DashboardData } from "@/data/types";
 import { exportOrdersCsv } from "@/features/orders/csv-export";
-import { filterOrdersByParams } from "@/features/overview/components/orders-table";
+import { filterOrdersByParams } from "@/features/orders/filter-orders";
 import { useUiStore, type Theme } from "@/store/ui-store";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
@@ -36,6 +38,7 @@ export default function CommandPalette() {
   const setCommandOpen = useUiStore((s) => s.setCommandOpen);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
+  const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
   const copyResetTimer = useRef<number>(undefined);
   const closeTimer = useRef<number>(undefined);
@@ -53,11 +56,20 @@ export default function CommandPalette() {
     setCommandOpen(false);
   }
 
-  function exportCsv() {
+  // Orders are range-independent, so any cached dashboard payload will do; only pay the
+  // 300 ms fetch when the palette is used before any dashboard data was loaded.
+  async function exportCsv() {
+    const cachedOrders = queryClient
+      .getQueryCache()
+      .getAll()
+      .map((query) => queryClient.getQueryData<DashboardData>(query.queryKey))
+      .find((data) => data?.orders.length)
+      ?.orders;
+    const orders = cachedOrders ?? (await fetchDashboardData(30)).orders;
     const rows =
       location.pathname === "/orders"
-        ? filterOrdersByParams(dashboardData.orders, searchParams)
-        : dashboardData.orders;
+        ? filterOrdersByParams(orders, searchParams)
+        : orders;
     exportOrdersCsv(rows, "pulse-orders.csv");
     setCommandOpen(false);
   }
@@ -117,7 +129,7 @@ export default function CommandPalette() {
           <Command.Item
             value="export-orders-csv"
             keywords={["csv", "download", "export"]}
-            onSelect={exportCsv}
+            onSelect={() => void exportCsv()}
             className={ITEM_CLASS}
           >
             <Download className="size-4" />
