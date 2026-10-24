@@ -7,10 +7,16 @@ import Topbar from "@/components/layout/topbar";
 import { useUiStore } from "@/store/ui-store";
 
 /**
- * Sonner toasts must stay visible and clickable while a native `<dialog>` is
- * open: `showModal()` promotes the dialog to the CSS top layer, which paints
- * above every ordinary fixed/`z-index` node. Housing the Toaster in a
+ * Sonner toasts must stay VISIBLE while a native `<dialog>` is open:
+ * `showModal()` promotes the dialog to the CSS top layer, which paints above
+ * every ordinary fixed/`z-index` node. Housing the Toaster in a
  * `popover="manual"` element puts it in that same top layer.
+ *
+ * Intentionally NOT a clickability guarantee: `showModal()` makes every node
+ * outside the dialog's subtree inert (no popover exemption), so anything on a
+ * toast is unclickable while a modal dialog is open. Actionable feedback that
+ * originates inside a dialog must render inside it (see ChangeStatus in
+ * order-detail.tsx, which uses inline error + Retry instead of toasts).
  *
  * Top layer paint order is insertion order, so the popover is shown lazily on
  * the first toast and re-promoted whenever sonner adds a toast node — the

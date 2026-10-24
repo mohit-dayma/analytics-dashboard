@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
 import {
   CalendarDays,
   CircleDollarSign,
@@ -12,7 +12,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Order, OrderStatus } from "@/data/types";
-import { nextStatuses, statusLabel, useUpdateOrderStatus } from "@/features/orders/use-update-order-status";
+import {
+  nextStatuses,
+  statusLabel,
+  useUpdateOrderStatus,
+  type UpdateOrderStatusVariables,
+} from "@/features/orders/use-update-order-status";
 import { formatChartDate, formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -93,9 +98,13 @@ function StatusTimeline({ status }: { status: OrderStatus }) {
 }
 
 /**
- * Forward-only status transitions. Only the clicked button reports the pending
- * state ("Marking…"); every transition button is disabled while a mutation is
- * in flight. Success/failure toasts come from the mutation hook itself.
+ * Forward-only status transitions with inline feedback — deliberately no
+ * toasts: the only mutator lives inside the slide-over, and a native modal
+ * dialog makes every node outside its subtree inert (`showModal()`), so even
+ * a top-layer toast is visible-but-dead exactly when the Retry it carries is
+ * needed (see TopLayerToaster in app-shell.tsx). Only the clicked button
+ * reports pending ("Marking…"); every button disables while a mutation is in
+ * flight. Failures render an inline error with a live Retry.
  */
 function ChangeStatus({ order }: { order: Order }) {
   const mutation = useUpdateOrderStatus();
@@ -103,11 +112,36 @@ function ChangeStatus({ order }: { order: Order }) {
   const isPending = mutation.isPending;
   const pendingStatus = isPending ? mutation.variables?.status : undefined;
 
+  type StatusFeedback =
+    | { kind: "success"; status: OrderStatus }
+    | { kind: "error"; message: string; retry: UpdateOrderStatusVariables };
+
+  const [feedback, setFeedback] = useState<StatusFeedback | null>(null);
+
+  function update(target: OrderStatus) {
+    const variables: UpdateOrderStatusVariables = { orderId: order.id, status: target };
+    // Per-call callbacks keep the feedback scoped to THIS attempt; the
+    // component is keyed by order id, so reopening another order restarts it.
+    mutation.mutate(variables, {
+      onSuccess({ order }) {
+        setFeedback({ kind: "success", status: order.status });
+      },
+      onError(error, variables) {
+        // The mock faults deterministically (calls n % 7), so a retry can
+        // still hit the slow/failing path — but eventually succeeds, like
+        // real flaky backends.
+        setFeedback({ kind: "error", message: error.message, retry: variables });
+      },
+    });
+  }
+
   return (
     <section aria-label="Change status" className="mt-4">
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Change status</h3>
       {targets.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">No further transitions.</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {feedback?.kind === "success" ? `Marked ${statusLabel(feedback.status)}.` : "No further transitions."}
+        </p>
       ) : (
         <div className="mt-2 flex flex-wrap gap-2">
           {targets.map((target) => (
@@ -117,11 +151,32 @@ function ChangeStatus({ order }: { order: Order }) {
               size="sm"
               disabled={isPending}
               aria-busy={pendingStatus === target || undefined}
-              onClick={() => mutation.mutate({ orderId: order.id, status: target })}
+              onClick={() => update(target)}
             >
               {pendingStatus === target ? "Marking…" : `Mark ${statusLabel(target)}`}
             </Button>
           ))}
+        </div>
+      )}
+      {feedback?.kind === "success" && targets.length !== 0 && (
+        <p role="status" className="mt-2 text-sm text-muted-foreground">
+          Marked {statusLabel(feedback.status)}.
+        </p>
+      )}
+      {feedback?.kind === "error" && (
+        <div
+          role="alert"
+          className="mt-2 flex items-center gap-3 text-sm text-red-600 dark:text-red-400"
+        >
+          <span className="min-w-0 flex-1">{feedback.message}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isPending}
+            onClick={() => update(feedback.retry.status)}
+          >
+            Retry
+          </Button>
         </div>
       )}
     </section>
@@ -285,7 +340,7 @@ export function OrderDetailPanel(props: {
               ))}
             </dl>
 
-            <ChangeStatus order={order} />
+            <ChangeStatus key={order.id} order={order} />
           </div>
         </>
       )}

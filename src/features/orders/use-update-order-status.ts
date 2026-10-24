@@ -1,11 +1,8 @@
-import { useEffect, useRef } from "react";
 import {
   useMutation,
   useQueryClient,
   type UseMutationResult,
-  type UseMutateFunction,
 } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { updateOrderStatus } from "@/data/mock-api";
 import type { UpdateOrderStatusResult } from "@/data/mock-api";
 import type { DashboardData, OrderStatus } from "@/data/types";
@@ -48,20 +45,16 @@ interface UpdateOrderStatusContext {
   snapshot: DashboardSnapshotEntry[];
 }
 
-type RetryMutate = UseMutateFunction<
-  UpdateOrderStatusResult,
-  Error,
-  UpdateOrderStatusVariables,
-  UpdateOrderStatusContext
->;
-
 /**
  * Optimistic pattern (interview point):
  * 1. onMutate cancels in-flight dashboard refetches, snapshots every cached
  *    ["dashboard", N] entry, then rewrites the matching order's status — the
  *    variables become the UI truth before any server round-trip lands.
- * 2. onError rolls the snapshots back (the old status reappears) and surfaces a
- *    loud, actionable retry toast; successes stay whisper-quiet.
+ * 2. onError rolls the snapshots back (the old status reappears); the failure
+ *    itself is surfaced INLINE by the caller (ChangeStatus) with a live
+ *    Retry — the only mutator lives inside the slide-over, and a native
+ *    modal dialog makes everything outside its subtree inert, so toast
+ *    actions would be visible-but-unclickable exactly when needed.
  * 3. onSettled invalidates ["dashboard"] so a refetch always reconciles the
  *    cache with server truth — optimism is only ever a rendering shortcut, and
  *    a retried mutation legitimately re-enters onMutate to flip the status.
@@ -73,10 +66,6 @@ export function useUpdateOrderStatus(): UseMutationResult<
   UpdateOrderStatusContext
 > {
   const queryClient = useQueryClient();
-  // The Retry action in the error toast re-enters this same mutation. `mutate`
-  // gets a stable identity only after useMutation returns, so it reaches the
-  // toast options through a ref synced on the next effect run.
-  const mutateRef = useRef<RetryMutate | null>(null);
 
   const mutation = useMutation({
     mutationFn: ({ orderId, status }: UpdateOrderStatusVariables) => updateOrderStatus(orderId, status),
@@ -105,34 +94,17 @@ export function useUpdateOrderStatus(): UseMutationResult<
       return { snapshot };
     },
 
-    onError(error, variables, context) {
-      // Roll back every entry we touched, then make the failure loud + actionable.
+    onError(_error, _variables, context) {
+      // Roll back every entry we touched; the caller surfaces the failure
+      // inline (message + Retry) where its buttons are actually clickable.
       for (const entry of context?.snapshot ?? []) {
         queryClient.setQueryData(entry.key, entry.data);
       }
-      toast.error(`Couldn't update ${variables.orderId}`, {
-        description: error.message,
-        action: {
-          label: "Retry",
-          // The mock faults deterministically, so a retry can still hit the
-          // slow/failing path — but eventually succeeds, like real flaky backends.
-          onClick: () => void mutateRef.current?.({ orderId: variables.orderId, status: variables.status }),
-        },
-      });
-    },
-
-    // Quiet confirmation; the slide-over + table already show the new status.
-    onSuccess({ order }) {
-      toast.success(`${order.id} marked ${statusLabel(order.status)}`);
     },
 
     onSettled() {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
-  });
-
-  useEffect(() => {
-    mutateRef.current = mutation.mutate;
   });
 
   return mutation;

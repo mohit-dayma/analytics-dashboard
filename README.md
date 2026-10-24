@@ -46,7 +46,7 @@ More captures (light/dark variants): [`orders-light`](docs/screenshots/orders-li
 
 - [x] Replace `mock-api` fetch with React Query and real cache keys (`["dashboard", rangeDays]`, stale-while-warm, 2 retries with backoff)
 - [x] Optimistic status updates on orders (cache-wide snapshot + rollback, forward-transition map)
-- [x] Retry/error toasts (sonner; deterministic fault injection in `updateOrderStatus` to exercise rollback/Retry)
+- [x] Retry/error feedback via inline alert + Retry inside the slide-over (deterministic fault injection in `updateOrderStatus` exercises rollback/Retry; sonner stays for app-level toasts, hosted top-layer so they paint over native dialogs)
 
 ### M4 — Depth
 
