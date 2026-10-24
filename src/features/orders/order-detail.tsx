@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import {
   CalendarDays,
   CircleDollarSign,
@@ -199,12 +199,6 @@ export function OrderDetailPanel(props: {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Backdrop clicks land on the <dialog> element itself, while clicks inside
-  // the panel land on child elements — treat an exact target match as backdrop.
-  function handleBackdropClick(event: MouseEvent<HTMLDialogElement>) {
-    if (event.target === dialogRef.current) onClose();
-  }
-
   // Escape fires `cancel`; preventDefault keeps the close routed through React
   // state (`onClose`) so `open` remains the single source of truth.
   function handleCancel(event: SyntheticEvent<HTMLDialogElement>) {
@@ -230,6 +224,22 @@ export function OrderDetailPanel(props: {
       dialog.close();
     }
   }, [open]);
+
+  // Backdrop-click close. Clicks that hit the native `::backdrop` are
+  // dispatched to the <dialog> host element itself, while clicks inside the
+  // panel land on child elements — so an exact target match means "the user
+  // clicked the scrim". The listener attaches at the document level instead of
+  // a JSX onClick on the non-interactive <dialog>: the dialog can never be
+  // focusable (so a key handler there would never fire), and its interactive
+  // affordances are the real buttons plus native Escape-on-cancel.
+  useEffect(() => {
+    if (!open) return;
+    function onDocumentClick(event: globalThis.MouseEvent) {
+      if (event.target === dialogRef.current) onClose();
+    }
+    document.addEventListener("click", onDocumentClick);
+    return () => document.removeEventListener("click", onDocumentClick);
+  }, [open, onClose]);
 
   const rows: DetailRow[] = order
     ? [
@@ -273,7 +283,6 @@ export function OrderDetailPanel(props: {
     <dialog
       ref={dialogRef}
       aria-label={order ? `Order ${order.id}` : undefined}
-      onClick={handleBackdropClick}
       onCancel={handleCancel}
       onClose={onClose}
       className={cn(
